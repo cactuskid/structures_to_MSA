@@ -5,92 +5,209 @@
 #from the PDB website.
 #the phylogeny is derived from a distance matrix
 #I used phylip kitsch to generate the newick tree. but any newick tree should work.
-from Bio.PDB import *
 import glob
 import subprocess
 import itertools
 import shlex
 from Bio import AlignIO , SeqIO
+from Bio.PDB import *
+
 import pickle
 import re
 import numpy as np
 import pandas as pd
 import math
-import pylab
+#import pylab
 import scipy.cluster.hierarchy as sch
 from itertools import combinations, permutations
 import scipy.spatial.distance as distutils
 import multiprocessing as MP
+import os
+import random
+import hashlib
 import tempfile as tmp
 
+random.seed(0)
 
-#steps in the process
-#compute all pairwise alignments with fatcat
+#find input pdbs
 grabPDBs = True
-align = False
-Fatcatalign = False
+#steps in the process
+align = True
+#compute all pairwise alignments with fatcat
+Fatcatalign = True
+#perform rigid body alignment
 TMalign = False
 #realign flexed structures with TM align
-TMalign_from_Fatcat = True
+TMalign_from_Fatcat = False
 
-#turn the output into fasta
-parse = False
-#use clustalo to create one sequence alignment of the strucutres
-merge = False
-#output a distance matrix based on SDM that you can use for phylogeny building
-distmat = True
-#use phylip kitsch after this step on the output : phylipmat.txt
+#use fatcat output to generate pairwise fastas
+parse = True
+#use TMalign results on flexed fatcat structures to generate pairwise fastas
+maketmfastas = False
 
-#generate a figure of the distmat and the phylogenetic tree
+#use clustalo to create MSA of the strucutres
+merge = True
+
+#output a distance matrices
+distmat = False
+
+TM = False
+SDM = True
+
 show_distmat = False
+splitFatcat = False
 
-#this is just a dumb hack to create non redundant fastas to analyze the merging of the intermediate alignments
-resolve_names = False
-
-
-
-#where a your structures? ... should all be single chain with decent homology. 
+#where a your structures? ... should all be single chain with decent homology.
 #filedir = '../domainIII/'
-filedir = '../effHapViralNew/'
+#filedir = '../structural_alignment/arabidop/'
+#filedir = '../structural_alignment/onlyhaps/'
+#filedir = '../effHapViralNew/flexi/'
+#filedir = '../structural_alignment/effcheck/'
+#filedir = '../structural_alignment/archaea_w_hap/'
+#filedir = '../effHapViralNew/'
+#filedir = '../newmodels/final/'
+#filedir = '/home/cactuskid/Dropbox/SAS-6_collection/structalignALL/'
+#filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/structalign_archaea_final/'
+
+#filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/'
+
+#filedir = '/home/cactuskid/Dropbox/IIB/archaeaReboot/David/models/structalign_figure/'
+
+
+filedir = '/home/cactuskid/cactuskid13@gmail.com/metal_coordination/final/'
 outpath = filedir
 #where is fatcat?
-FatcatPath =  './runFATCAT.sh' 
+FatcatPath =  './runFATCAT.sh'
 TMalignPath = './TMalign/TMalign'
-#where is clustalo?
+Dalipath = './DaliLite3.3/DaliLite '
 clustaloPath = 'clustalo'
-
-
+fastmepath = 'fastme '
+#split directory
+splitpath = 'split/'
 
 def save_obj(obj, name ):
-    with open( name + '.pkl', 'wb') as f:
-        pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
+	with open( name + '.pkl', 'wb') as f:
+		pickle.dump(obj, f)
 
 def load_obj(name ):
-    with open( name + '.pkl', 'r') as f:
-        return pickle.load(f)
+	with open( name + '.pkl', 'rb') as f:
+		return pickle.loads(f.read())
 
 def runFatcat(pargs):
 	FatcatPath , struct1, struct2, outfile , outPDB = pargs
-	
+
+	if os.path.isfile(outfile):
+		with open( outfile , 'r')as preout:
+			if len(preout.read())>0:
+				print(outfile + ' already exists	')
+				return outfile
+
 	args =  FatcatPath + ' -file1 ' + struct1 + ' -file2 ' + struct2 + '  -printFatCat -flexible True -outputPDB  -outFile '+ outPDB
-	print args
+	print( args)
 	args = shlex.split(args)
 	fatcatfile = open(outfile, 'w')
 	p = subprocess.call(args  , stdout= fatcatfile )
 	fatcatfile.close()
 	return outfile
-	
 
 def runTMalign(pargs):
 	FatcatPath , struct1, struct2, outfile , outPDB = pargs
-	args =  TMalignPath + ' ' + struct1 + ' ' + struct2 
-	print args
+	args =  TMalignPath + ' ' + struct1 + ' ' + struct2
+	print( args)
 	args = shlex.split(args)
 	TMfile = open(outfile, 'w')
 	p = subprocess.call(args , stdout= TMfile )
 	TMfile.close()
 	return outfile
-	
+
+def splitFile(Fatcatstruct, outdir , pdbs):
+	"""
+	TITLE  jFatCat_flexible 1.0 domain3_4hj1.pdb vs. domain3_4adi.pdb
+	EXPDTA    NMR, 2 STRUCTURES
+	MODEL      1
+	"""
+
+	coords = {}
+	header = ''
+	i =0
+	start = False
+	with open( Fatcatstruct , 'r' ) as PDBfile:
+		for line in PDBfile:
+			if start == False:
+				if 'EXPDTA' in line:
+					header += line.replace('2','1')
+				else:
+					header += line
+			if 'TITLE' in line:
+				pdb2 = line.replace('TITLE  jFatCat_flexible 1.0' , '' ).split('vs.')[0].strip()
+				pdb1 = line.replace('TITLE  jFatCat_flexible 1.0' , '' ).split('vs.')[1].strip()
+			if 'MODEL' in line:
+				start = True
+				i+=1
+				coords[i] = ''
+			if start == True:
+				coords [i] += line
+
+	names = []
+	for pdb in pdbs:
+		names.append(pdb.split('/')[-1])
+
+	filehandle1 = open( outdir + names[0].replace('pdb', '') + 'vs' + names[1] , 'w')
+	filehandle2 = open( outdir + names[1].replace('pdb', '') + 'vs' + names[0] , 'w')
+	handles = [filehandle1, filehandle2]
+	pdbs = [pdb1, pdb2]
+
+	for i,struct in enumerate(coords):
+		handles[i].write(header)
+		handles[i].write(coords[struct])
+		handles[i].write('ENDMDL')
+
+	for handle in handles:
+		handle.close()
+
+	return 0;
+
+
+def splitFileTMP(Fatcatstruct, outdir):
+	"""
+	TITLE  jFatCat_flexible 1.0 domain3_4hj1.pdb vs. domain3_4adi.pdb
+	EXPDTA    NMR, 2 STRUCTURES
+	MODEL      1
+	"""
+
+	coords = {}
+	header = ''
+	i =0
+	start = False
+	with open( Fatcatstruct , 'r' ) as PDBfile:
+		for line in PDBfile:
+			if start == False:
+				if 'EXPDTA' in line:
+					header += line.replace('2','1')
+				else:
+					header += line
+			if 'TITLE' in line:
+				pdb2 = line.replace('TITLE  jFatCat_flexible 1.0' , '' ).split('vs.')[0].strip()
+				pdb1 = line.replace('TITLE  jFatCat_flexible 1.0' , '' ).split('vs.')[1].strip()
+			if 'MODEL' in line:
+				start = True
+				i+=1
+				coords[i] = ''
+			if start == True:
+				coords [i] += line
+
+	filehandle1 = tmp.NamedTemporaryFile( 'w' , dir = './')
+	filehandle2 = tmp.NamedTemporaryFile( 'w' , dir = './')
+	handles = [filehandle1, filehandle2]
+
+	for i,struct in enumerate(coords):
+		handles[i].write(header)
+		handles[i].write(coords[struct])
+		handles[i].write('ENDMDL')
+
+	for handle in handles:
+		handle.close()
+	return filehandle1, filehandle2;
 
 def runTMalign_FatcatOut(pargs):
 	TMalignPath , Fatcatstruct, outfile  = pargs
@@ -109,7 +226,7 @@ def runTMalign_FatcatOut(pargs):
 			if start == False:
 				if 'EXPDTA' in line:
 					header += line.replace('2','1')
-				else:	
+				else:
 					header += line
 			if 'TITLE' in line:
 				pdb2 = line.replace('TITLE  jFatCat_flexible 1.0' , '' ).split('vs.')[0].strip()
@@ -118,7 +235,6 @@ def runTMalign_FatcatOut(pargs):
 				start = True
 				i+=1
 				coords[i] = ''
-				
 			if start == True:
 				coords [i] += line
 	filehandle1 = tmp.NamedTemporaryFile( 'w' , dir = './')
@@ -126,16 +242,16 @@ def runTMalign_FatcatOut(pargs):
 	handles = [filehandle1, filehandle2]
 	pdbs = [pdb1, pdb2]
 	for i,struct in enumerate(coords):
-		handles[i].write(header) 
-		handles[i].write(coords[struct]) 
-		handles[i].write('ENDMDL')	
-	args =  TMalignPath + ' ' + handles[0].name + ' ' + handles[1].name 
-	print args
-	
+		handles[i].write(header)
+		handles[i].write(coords[struct])
+		handles[i].write('ENDMDL')
+	args =  TMalignPath + ' ' + handles[0].name + ' ' + handles[1].name
+	print(args)
+
 	args = shlex.split(args)
 	TMfile = open(outfile, 'w')
 	p = subprocess.call(args , stdout= TMfile )
-	
+
 	for handle in handles:
 		handle.close()
 	TMfile.close()
@@ -145,13 +261,13 @@ def testTMalign_fromFatacat():
 	TMalignPath = './TMalign/TMalign'
 	Fatcatstruct = '../effHapViralNew/1SVB_4ADI.factcatPDB'
 	outfile = 'tmaligntest.txt'
-	pargs =TMalignPath , Fatcatstruct, outfile  
+	pargs =TMalignPath , Fatcatstruct, outfile
 	outfile, pdbs =runTMalign_FatcatOut(pargs)
-	print pdbs 
+	print( pdbs)
 	with open(outfile , 'r') as output:
 		for line in output:
-			print line
-	
+			print( line)
+
 def testTMalign():
 	pd1 = '../structural_alignment/effHapViralcontrol/1SVB.pdb'
 	pd2 = '../structural_alignment/effHapViralcontrol/2ala.pdb'
@@ -160,17 +276,15 @@ def testTMalign():
 	outfile = '../structural_alignment/effHapViralcontrol/TMaligntest.txt'
 
 	runTMalign([TMalignPath,pd1, pd2, outfile , outpath])
-	
+
 
 def mergeAlign(clustalopath , fasta1, fasta2, outfile):
-	args =  clustalopath + ' --force --p1 ' + fasta1 + ' --p2 ' + fasta2 + ' -o ' + outfile
-	print args
+	args =  clustalopath + ' --p1 ' + fasta1 + ' --p2 ' + fasta2 + ' --force -o ' + outfile
+	print( args)
 	args = shlex.split(args)
 	p = subprocess.call(args )
 
 def FatcatToFasta(fatout, filename):
-	print fatout 
-	print filename
 	alns = ['','']
 	files = []
 	BlockNext = False
@@ -178,27 +292,31 @@ def FatcatToFasta(fatout, filename):
 	with open( fatout , 'r' ) as fatfile:
 		for line in fatfile:
 			try:
-				print line
+				print( line)
 				if 'file from local' in line:
-					files.append(line.split('/')[-1])	
+					files.append(line.split('/')[-1])
 				#format  = Chain 1:   16 PHC---------------SKTPIVRAQTSQNAMS-------RGMQMQFSIGLHT---------AVC----
 				if 'Chain 1:' in line:
 					alns[0] += line.split(':')[1].strip().split(' ')[1]
 				if 'Chain 2:' in line:
 					alns[1] += line.split(':')[1].strip().split(' ')[1]
 			except:
-				print 'line error:'
-				print line
-		alnstr1 = '>'+files[0][:-1] + 'Fatcat_block' +'\n' +alns[0] + '\n'
-		alnstr2 = '>'+files[1][:-1] + 'Fatcat_block' +'\n' +alns[1] + '\n'
-		print alnstr1
-		print alnstr2
+				print('line error:')
+				print( line)
+		try:
+			alnstr1 = '>'+files[0][:-1] + 'Fatcat_block' +'\n' +alns[0] + '\n'
+			alnstr2 = '>'+files[1][:-1] + 'Fatcat_block' +'\n' +alns[1] + '\n'
+		except:
+			print( [files , alns ])
+		alnstr1=''
+		alnstr2=''
+		print( alnstr1)
+		print(alnstr2)
 		handle = open(filename  , 'w')
 		handle.write(alnstr1 + '\n')
 		handle.write(alnstr2)
 		handle.close()
 		return filename
-
 
 def FatcatToDistances(fatout):
 	alns = ['','']
@@ -206,10 +324,14 @@ def FatcatToDistances(fatout):
 	BlockNext = False
 	Blocknum = 0
 	pval = 0
+	pdbs = []
+	cleanlen = 0
+
 	distances = {}
 	counts = {}
 	numbers = re.compile('[-+]?[0-9]*\.?[0-9]+.')
 	integers = re.compile('\s[0-9]+\s')
+
 	with open( fatout , 'r' ) as fatfile:
 		for i,line in enumerate(fatfile):
 			if 'P-value' in line:
@@ -221,7 +343,7 @@ def FatcatToDistances(fatout):
 				pdbs = []
 				for filename in files:
 					if '.pdb' in filename.lower():
-						pdbs.append(filename)	
+						pdbs.append(filename)
 				lengths = integers.findall(line)
 				cleanlen = []
 				for val in lengths:
@@ -238,10 +360,13 @@ def FatcatToDistances(fatout):
 						counts[j] = 0
 					counts[j]+= line.count(str(j+1))
 	return pdbs, cleanlen, distances, counts , pval
-	
-def TMaligntoDistance(TMalignfile):
+
+
+
+
+def TMaligntoDistance(args):
 	#parse TM align file and output parameters
-	print TMalignfile
+	TMalignfile, pdbs = args
 	"""
 	format:
 		 **************************************************************************
@@ -266,37 +391,48 @@ def TMaligntoDistance(TMalignfile):
 
 	(":" denotes aligned residue pairs of d < 5.0 A, "." denotes other aligned residues)
 	SRCTHLENRDFVTGTQG-TTRVTLVLELGGCVTITAEG-----K-PSMDVW-LDAIYQENPAKTREYCLHAKLSDTKVAARCPTMGPATLAEEHQGGTVCKRDQ-SDRGW-G-N-HC-GLFGKGSIVACVKAAC--EAKKKATGHVYDANKIVYTVKVEPHTGDYVAANET-HSGRKTASFTISSEKTILTMGEYGDVSLLCRVASGVDLAQTVILELDKTVEHLPTAWQVHRDWF-ND----LALPWKHE-GAQNWNNAERLVEFGAPHA--VKMDV-YNLGDQTGVLLKALAGVPV-------AHIEGTKYHLK-SGHVTCEVGLEK---LKMKG--LTYT-MCDKTKFTWKRAPTDSGHDTVVMEVTFS-GT-----KPCRIPVRAVAHGSPDVNVAMLITPNPTIENN-----GGGFIEMQLPPGDNIIY-V-------GELSHQWFQK-
-					  .::::. .......::::::     : :::::: .::::.. :::: ::::::::: ::::::..::::.. . .::::.::::.: .:::: : : :: ::...:::::::.:::  ::::::::::...  .::::::::...         .:::::::..  .:::::: :  .:.::.::...:.....::::::   :  :: :::::.... ..    :::::::: .:::::: ::......:::  ::::. ..::.::.::.::.:....       ::::  ::::. .....::::..:   .....  .:.. ..... ...  .:.:.    .::....  .      ........         ...::::..::...      ...::::.:   ::... .       .....::..  
+					  .::::. .......::::::     : :::::: .::::.. :::: ::::::::: ::::::..::::.. . .::::.::::.: .:::: : : :: ::...:::::::.:::  ::::::::::...  .::::::::...         .:::::::..  .:::::: :  .:.::.::...:.....::::::   :  :: :::::.... ..    :::::::: .:::::: ::......:::  ::::. ..::.::.::.::.:....       ::::  ::::. .....::::..:   .....  .:.. ..... ...  .:.:.    .::....  .      ........         ...::::..::...      ...::::.:   ::... .       .....::..
 	-----------------YEHSTVM-PNVVGFPYKAHIERPGYSPLTLQMQVVETSLEPT-LNLE-YITCEYKTV-VPSPYVKCCGASEC-S-TKEKPDYQCKVYTGVYPFMWGGAYCFCDSENTQLSEAYVDRSDVCRHDHASAYKAHT--ASLKAKVRVMYG--------NVNQTVDVYVN--GDHAVTI-G--GTQFIFGPLSSAWTPFDNKIVVY---K--DE-VFNQDFPPYGSGQPGRFGDIQSRTVESNDLYA-NTALKLARPSPGMVHVPYTQTPSGFKYWLKEKGTALNTKAPFGCQIKTN--PVRAMNCAVGNIPVSMNLPDSAFTRIVEAPTIIDLTCT-VAT--CTHSS----DFGGVLT-LT-YKTNKNGDCSVHS---------HSNVATLQEATAKV-KTAGKVTLHFSTAS---ASPSFVVSLCSARATCSASCEPP-K
-
-
 
 	"""
 	#maybe incorporate more stuff into this later
-	
-	TMscores = []
-	pdbs = []
-	
-	
-		
+
+	TMscores =[]
+	readpdbs =[]
+	line1 = False
+	line2 = 10**10
 	with open( TMalignfile, 'r') as output:
-		for line in output:
+		for i,line in enumerate(output):
 			if 'Length of Chain_1:' in line:
 				chain1len = int(line.split(':')[1].split()[0] )
 			if 'Length of Chain_2:' in line:
 				chain2len = int(line.split(':')[1].split()[0]	)
 			if 'Name of Chain_' in line and '*' not in line :
-				pdbs.append(line.split(':')[1].strip())
+				readpdbs.append(line.split(':')[1].strip())
 			if 'TM-score' in line and '*' not in line and ' normalized by length of the reference protein' not in line:
 				score = float(line.split('=')[1].split( )[0])
 				TMscores.append(score)
-	if chain1len>chain2len:
-		return TMscores[1], pdbs
-	else :
-		return TMscores[0], pdbs
 
-def FatcatToDF(fatout ):
-	print fatout
+			if line1== True:
+				fasta1= line
+				line2 = i+2
+				line1 = False
+
+			if '(":" denotes aligned residue pairs of d < 5.0 A, "." denotes other aligned residues)' in line:
+				line1 = True
+
+			if i == line2:
+				fasta2 = line
+
+	outstr = ''.join(['>' ,pdbs[0] ,'\n' , fasta1 , '\n' ,  '>' ,pdbs[1] ,'\n' , fasta2 ,'\n' ])
+	print( outstr)
+	if chain1len>chain2len:
+		return TMscores[1], pdbs , outstr
+	else :
+		return TMscores[0], pdbs , outstr
+
+def FatcatToDF(fatout):
+	print( fatout)
 	alns = ['','']
 	files = []
 	pdbfile =fatout+ 'PDB'
@@ -315,9 +451,9 @@ def FatcatToDF(fatout ):
 	numbers = re.compile('[-+]?[0-9]*\.?[0-9]+.')
 	integers = re.compile('\s[0-9]+\s')
 	number = re.compile('[0-9]+')
-	
+
 	sequence = re.compile('[A-Z-]+')
-	
+
 	with open( fatout , 'r' ) as fatfile:
 		for i,line in enumerate(fatfile):
 			if 'Align' in line:
@@ -326,13 +462,11 @@ def FatcatToDF(fatout ):
 				pdbs = []
 				for filename in files:
 					if '.pdb' in filename.lower():
-						pdbs.append(filename)	
+						pdbs.append(filename)
 				lengths = integers.findall(line)
 				cleanlen = []
 				for val in lengths:
 					cleanlen.append(int(val.strip()))
-
-			
 			if 'Block' in line:
 				#Block  0 afp 17 score 201.70 rmsd  3.92 gap 128 (0.48%)
 				words = line.split('rmsd')[1]
@@ -341,14 +475,14 @@ def FatcatToDF(fatout ):
 				Blocknum+=1
 
 			#Chain 1:   19 TWVDLVLEGDSCVTIMSK----DKPTIDVKMMNMEAANLAEVRSYCYLATVSDLSTKAACPTMGEAHNDK
-	            #  			   111111111111111111    111111111111111 111111111111111111         11111
+				#  			   111111111111111111    111111111111111 111111111111111111         11111
 			#Chain 2:    3 HVTVIPNTVGVPYKTLVNRPGYSPMVLEMELLSVTLEPTLSLDYITCEYKTVIPSPYVKCCGTAECKDKN
-			
+
 			if chain1_read == True:
 				#read block asiignment
 				chain1_read = False
 				blocks = line[14:]
-				
+
 			if 'Chain 1' in line:
 				chain1_read = True
 				cleanline = line.split(':')[1].strip()
@@ -363,7 +497,7 @@ def FatcatToDF(fatout ):
 
 			if chain2_read == True:
 				chain2_read = False
-				#parse the two chains and map residues to block, gap or aln positions 
+				#parse the two chains and map residues to block, gap or aln positions
 				#residue count
 				count1 = 0
 				count2 = 0
@@ -374,12 +508,12 @@ def FatcatToDF(fatout ):
 						skip = False
 						if char1 == '-':
 							# assign values for the residue that opened the gap
-							row2 = [char2,'NONE', 'gap' , 'NONE' , 'NONE']	
+							row2 = [char2,'NONE', 'gap' , 'NONE' , 'NONE']
 							df2dict[start2+count2] = row2
 							count2 +=1
 							skip = True
 						if char2 == '-':
-							row1 = [char1,'NONE', 'gap' , 'NONE' ,  'NONE']	
+							row1 = [char1,'NONE', 'gap' , 'NONE' ,  'NONE']
 							df1dict[start1+count1] = row1
 							count1 +=1
 							skip = True
@@ -391,14 +525,14 @@ def FatcatToDF(fatout ):
 							df2dict[start2+count2] = row2
 							count2 +=1
 							count1 +=1
-	
+
 	df1 = pd.DataFrame.from_dict( df2dict , orient= 'index' )
 	df2 = pd.DataFrame.from_dict( df1dict , orient= 'index' )
 
 	df1.columns = ['res','block','status','match','matchres']
 	df2.columns = ['res','block','status','match','matchres']
 
-	
+
 	return df1, df2 , pdbs, pdbfile
 
 def norm2coords( args ):
@@ -407,200 +541,30 @@ def norm2coords( args ):
 	return i , j , NORM
 
 def qalnscore( args):
-	i, j , index1a, index2a , index1b , index2b , Adistmat , Bdistmat = args 
-	qaln = np.exp(- math.pow(Adistmat[index1a, index2a] - Bdistmat[index1b, index2b] ,2 )  / (2*math.pow(math.fabs(i-j),1.5 )  ) )
+	i, j , index1a, index2a , index1b , index2b , Adistmat , Bdistmat = args
+	qaln = np.exp(- math.pow(Adistmat[index1a, index2a] - Bdistmat[index1b, index2b] ,2 )  / (2*math.pow(math.fabs(i-j),.15 )  ) )
 	return qaln
 
-	
-def calculateQh(pargs):
-	pairwisePDB,df1,df2,pdbs = pargs
-	#pairwise pdb is the aligned fatcat output
-	#df1 should be the first structures dataframe showing where it aligned etc
-	parser = PDBParser(PERMISSIVE=1)
-	structure = parser.get_structure('Model 1' ,pairwisePDB)
-	model1 = structure[0]
-	model2 = structure[1]
-	residues1 = model1.get_residues()
-	residues2 = model2.get_residues()
 
-
-	resdict1 = {}
-	for res in residues1:
-		if 'CA' in res:
-			resdict1[res.id[1]] = res['CA'].coord
-	
-	resdict2 = {}
-	for res in residues2:
-		if 'CA' in res:
-			resdict2[res.id[1]] = res['CA'].coord
-
-	
-	resdf1 = pd.DataFrame.from_dict( resdict2 , orient= 'index' )
-	resdf2 = pd.DataFrame.from_dict( resdict1 , orient= 'index' )
-	
-	resdf1.columns = ['x','y','z']
-	resdf2.columns = ['x','y','z']
-	
-	
-	df1 =pd.concat([df1, resdf1], axis=1)
-	df2 = pd.concat([df2, resdf2], axis =1)
-	
-	Acoords = resdf1[['x','y','z']].as_matrix()
-	Bcoords = resdf2[['x','y','z']].as_matrix()
-	
-	
-	pool = MP.Pool()
-	
-	Adistmat = np.zeros((len(resdf1.index), len(resdf1.index) ) )
-	rundata = []
-	for i , res1 in enumerate(resdf1.index):
-		for j, res2 in enumerate(resdf1.index):
-			if i < j :
-				rundata.append([Acoords , Acoords , i , j])
-	results = pool.map_async( norm2coords , rundata).get()
-	for result in results:
-		i,j,norm = result
-		Adistmat[i,j] = norm
-	Adistmat += Adistmat.T
-
-	Bdistmat = np.zeros((len(resdf2.index), len(resdf2.index) ) )
-	rundata = []
-	for i , res1 in enumerate(resdf2.index):
-		for j, res2 in enumerate(resdf2.index):
-			if i < j :
-				rundata.append([Bcoords , Bcoords , i , j])
-	results = pool.map_async( norm2coords , rundata).get()
-	for result in results:
-		i,j,norm = result
-		Bdistmat[i,j] = norm
-	Bdistmat += Bdistmat.T
-
-	print 'done distmats'
-
-	alnDF2 = df2.query( 'status == "aln"')
-	alnDF1 = df1.query( 'status == "aln"')
-	
-	resnums1 = resdf1.index.tolist()
-	resnums2 = resdf2.index.tolist()
-	qaln = 0
-	rundata = []
-	#some discontinuties in PDBs... check if the residue exists
-	#residue start is rest at each fatcat line so the error shouldnt propagate much
-	
-	for i in alnDF1.index:
-		for j in alnDF1.index:
-			if i <= j-2:
-				if i in resnums1 and j in resnums1:
-					index1a = resnums1.index(i)
-					index2a = resnums1.index(j)
-					iprime = alnDF1['match'][i]
-					jprime = alnDF1['match'][j]
-					if iprime in resnums2 and jprime in resnums2:
-						index1b = resnums2.index(iprime)
-						index2b = resnums2.index(jprime)
-						rundata.append([i, j , index1a, index2a , index1b , index2b , Adistmat , Bdistmat])
-	results = pool.map_async( qalnscore , rundata).get()
-	qaln = sum(results)
-	print qaln
-	print 'done qaln'
-	gapDF2 = df2.query( 'status == "gap"')
-	gapDF1 = df1.query( 'status == "gap"')
-	qgap = 0
-	g0 = 0
-	g1 = 0 
-	g2 = 0
-	
-	
-	coords = []
-	rundata = []
-	#calculate the two sets of qgap scores
-	for gapDF, alnDF, resn1, resn2 , Adist, Bdist in [(gapDF1,alnDF1,resnums1,resnums2,Adistmat , Bdistmat), (gapDF2,alnDF2,resnums2,resnums1, Bdistmat, Adistmat)]:
-			
-		print len(gapDF.index)
-		print len(alnDF.index)
-		for gapRes in gapDF.index:
-			try:
-				#closest aligned residue is edge1
-				indexArray = np.asarray(alnDF.index)
-				gapedge1 = indexArray[np.argmin(np.absolute(indexArray - gapRes )) ]
-				#find opposite gap edge
-				if gapedge1 > gapRes:
-					otherside = indexArray[np.where(indexArray< gapRes)] 
-					gapedge2 =  otherside[np.argmin(np.absolute( otherside - gapRes ) ) ]
-				else:
-					otherside = indexArray[np.where(indexArray>gapRes)] 
-					gapedge2 =  otherside[np.argmin(np.absolute( otherside - gapRes ) ) ]
-				gapedges = [gapedge1, gapedge2]
-				if np.amin(np.absolute(np.asarray(gapedges)-gapRes) )> 2:
-					g2+=1
-				if np.amin(np.absolute(np.asarray(gapedges)-gapRes) ) == 2:
-					g1+= 1
-				if np.amin(np.absolute(np.asarray(gapedges)-gapRes) ) < 2:
-					g0+= 1
-				
-				for alnRes in alnDF.index:
-					index1a = resn1.index(gapRes)
-					index2a = resn1.index(alnRes)
-					#match j' and edges from prot A
-					index1b = resn2.index(alnDF['match'][alnRes])
-					for edge in gapedges:											
-						index2b =  resn2.index(alnDF['match'][edge])
-						rundata.append([resn1.index(gapRes), resn1.index(alnRes) , index1a, index2a , index1b , index2b , Adist , Bdist ])
-						coords.append([gapRes,edge, alnRes])
-			except:
-				pass
-				
-		#calculate all and then use coords to find maxima before calculating the sum 
-		results = pool.map_async(qalnscore, rundata).get()
-		print len(results)
-		scores = {}
-		for i , score in enumerate(results):
-			gapRes,edge, alnRes = coords[i]
-			if (gapRes, edge, alnRes) not in scores:
-				scores[(gapRes, edge, alnRes)]= score
-			else:
-				if scores[(gapRes, edge, alnRes)] < score:
-					scores[(gapRes, edge, alnRes)] = score
-		print sum(scores.values())
-		qgap += sum(scores.values())
-	pool.close()
-	Naln = len(alnDF1.index)
-	Ngap = len(gapDF1.index) + len(gapDF2.index)
-	N = .5* (Naln -1)*(Naln -2) + g0*(Naln) + g1 *( Naln-1) + g2 * (Naln -2) + Ngap
-	print {'N': N , 'Naln':Naln, 'Ngap' : Ngap, 'qaln': qaln, 'qgap':qgap , 'g0': g0 , 'g1':g1 , 'g2':g2}
-	finalscore =  (qaln + qgap) / N
-	print finalscore
-	print 'DONE'
-	return finalscore, N , qaln, qgap , [Naln, g0, g1, g2] ,pdbs
-
-
-def testQHscore():
-	df1, df2 , pdbs, pdbfile = FatcatToDF(filedir+'1SVB_4ADI.factcat')
-	Qh = calculateQh([pdbfile, df1, df2])
-
-if grabPDBs == True:
-	structures = glob.glob(filedir + '*.pdb')
-	print structures
-	save_obj(structures, filedir + 'pdblist')
 if align == True:
-	print 'pairwise aligning structures'
-	structures = load_obj(filedir +'pdblist')
-	print structures
-	pool = MP.Pool()
+	structures = glob.glob(filedir + '*.pdb')
+	print(structures)
 	if Fatcatalign == True :
+
+
 		fatcatfiles = []
 		runData = []
 		for struct1,struct2 in itertools.combinations(structures, 2):
 			outfile = outpath + struct1.split('/')[-1].replace('.pdb','')+ '_'+struct2.split('/')[-1].replace('.pdb','') + '.factcat'
 			outPDB = outfile + 'PDB'
 			runData.append([FatcatPath ,struct1,struct2, outfile, outPDB])
-		
-		print len(runData)
-		print 'alignments to run'
-		print 'fatcat align allvall'
+		print(len(runData))
+		print('alignments to run')
+		print( 'fatcat align allvall')
+		pool = MP.Pool()
 		results = pool.map_async( runFatcat , runData, MP.cpu_count() ).get()
+		pool.close()
 		save_obj( results, filedir +'fatcatfiles')
-
 	if TMalign == True:
 		TMalignfiles = []
 		runData = []
@@ -608,8 +572,10 @@ if align == True:
 			outfile = outpath + struct1.split('/')[-1].replace('.pdb','')+ '_'+struct2.split('/')[-1].replace('.pdb','') + '.TMalign'
 			outPDB = outfile + 'PDB'
 			runData.append([FatcatPath ,struct1,struct2, outfile, outPDB])
-		print 'TMalign align allvall'
+		print('TMalign align allvall')
+		pool = MP.Pool()
 		results = pool.map_async( runTMalign , runData, MP.cpu_count() ).get()
+		pool.close()
 		save_obj( results, filedir +'TMalignfiles')
 	if TMalign_from_Fatcat == True:
 		#run this after fatcat!
@@ -617,29 +583,54 @@ if align == True:
 		alignments = load_obj(filedir + 'fatcatfiles')
 		for aln in alignments:
 			runData.append([TMalignPath , aln+'PDB' ,  aln+'TMRealign'])
-		print runData
+		print( runData)
+		pool = MP.Pool()
 		results = pool.map_async( runTMalign_FatcatOut, runData, MP.cpu_count() ).get()
 		save_obj( results, filedir +'TMRealignfiles')
-	pool.close()
-	
-	print 'done aligning'
-	
+		pool.close()
+		print('done aligning')
+if splitFatcat == True:
+	splitdir = filedir + splitpath
+	if os.path.exists(splitdir) == False:
+		os.mkdir( splitdir)
+	fatcatfiles = load_obj( filedir +'fatcatfiles')
+	for filename in fatcatfiles:
+		PDB = filename + 'PDB'
+		pdbs, cleanlen, distances, counts , pval = FatcatToDistances(filename)
+		splitFile(PDB, splitdir , pdbs)
+		print([ PDB, pdbs])
 
 if parse == True:
-	print filedir
-	alignments = load_obj(filedir + 'fatcatfiles')
+	print( filedir)
+	alignments = glob.glob(filedir + '*.factcat')
+	print(len(alignments))
 	fastas = []
 	distances = {}
-	print 'converting fatcat output to fasta'
+	print( 'converting fatcat output to fasta')
 	for aln in alignments:
 		fastas.append(FatcatToFasta(aln,aln+'.fasta'))
+	for aln in alignments:
 		distances[aln] = FatcatToDistances(aln)
-		
-	print len(fastas)
-	print 'alignments by fatcat'
+	if maketmfastas == True:
+		tmalignments = load_obj(filedir + 'TMRealignfiles')
+		tmfastas = []
+		for aln in tmalignments:
+			distance, pdbs, outstr = TMaligntoDistance(aln)
+			handle = open(aln[0]+'.fasta' , 'w')
+			handle.write(outstr)
+			handle.close()
+			tmfastas.append(aln[0]+'.fasta')
+		save_obj(tmfastas, filedir + 'tmfastas')
+	print( len(fastas))
+	print( 'alignments by fatcat')
 	save_obj( fastas, filedir+'fastas')
 	save_obj(  distances, filedir +'distances')
-	print 'done writing fastas'
+	print( 'done writing fastas')
+def runFastme( fastmepath , clusterfile ):
+	args =  fastmepath +  ' -i ' + clusterfile + ' -o ' + clusterfile+'_tree.txt'
+	print( args)
+	p = subprocess.call(shlex.split(args) , stdout=subprocess.PIPE )
+	return p,[clusterfile+'_tree.txt' ]
 
 def distmat_to_txt( pdblist , distmat, filedir , name):
 		#write out distmat in phylip compatible format
@@ -652,263 +643,168 @@ def distmat_to_txt( pdblist , distmat, filedir , name):
 			for pad in range(10 -len(pdb)):
 				namestr += ' '
 		outstr += namestr+ ' ' + np.array2string( distmat[i,:], formatter={'float_kind':lambda x: "%.2f" % x}).replace('[', '').replace(']', '')  + ' \n'
-	print outstr
+	print( outstr)
 	handle = open(filedir + name + 'phylipmat.txt' , 'w')
 	handle.write(outstr)
 	handle.close()
-
 	outstr = str(len(pdblist)) + '\n'
 	for i,pdb in enumerate(pdblist):
 		namestr = pdb.replace('.','').replace('_','')[0:20]
 		outstr += namestr+ ' ' + np.array2string( distmat[i,:], formatter={'float_kind':lambda x: "%.2f" % x}).replace('[', '').replace(']', '').replace('\n', '')  + '\n'
-	
-	print outstr
+
+	print( outstr)
 	handle = open(filedir + name + 'fastmemat.txt' , 'w')
 	handle.write(outstr)
 	handle.close()
-	
-	
+	return filedir + name + 'fastmemat.txt'
+
 if distmat == True:
-	
-	distances = load_obj(filedir + 'distances')
-	maxdist = 0
-	pdblist = []
-	for out in distances.values():
-		
-		pdblist += out[0]
-		for dist in out[2]:
-			if dist > maxdist:
-				maxdist = dist
-	pdblist = list(set(pdblist))
-	print 'creating SDM distmat for Fatcat output'
-	
-	distmat = np.zeros((len(pdblist),len(pdblist)))
-	pvalmat = np.zeros((len(pdblist),len(pdblist)))
-
-	#calculate SDM based distmat
-	for out in distances.values():
-		lensmallprot = min(out[1])
-		SRMSs = []
-		count = 0
-		pdbs = out[0]
-		distances = out[2]
-		counts = out[3]
-		pval = out[4]
-		for block in distances:
-			count += counts[block]
-			SRMSs.append(counts[block]*(1-distances[block]/maxdist))
-		PFTE = count / lensmallprot
-		avgSRMS = sum(SRMSs)/count
-		w1 = (1 -PFTE + 1 -avgSRMS) /2 
-		w2 = (PFTE +avgSRMS)/2
-		sdm = -100* math.log(w1*PFTE + w2 *avgSRMS)
-		distmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = sdm
-		#low pval -> high score
-		pvalmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = pval
-	distmat += distmat.T
-	#distmat /= np.amax(distmat)
-	distmat_to_txt( pdblist , distmat, filedir , 'SDMmat')
-	distmat_to_txt( pdblist , pvalmat, filedir , 'pvalmat')
-	
-	
-	
-	"""
-	print 'creating QH and Qaln distmats for Fatcat output'
-	alignments = load_obj(filedir + 'fatcatfiles')
-
-	#qh based distmats
-	QHmat = np.zeros((len(pdblist),len(pdblist)))
-	Qalnmat = np.zeros((len(pdblist),len(pdblist)))
-	
-	runData = []
-	for filename in alignments:
-		df1,df2,pdbs,pdbfile = FatcatToDF(filename)
-		runData.append( [pdbfile ,df1,df2 , pdbs])
-	
-	
-	
-	#pool = MP.Pool()
-	#results = pool.map_async( calculateQh , runData ).get()
-	for args in runData:
-		results = calculateQh(args)
-		finalscore, N , qaln, qgap , factors, pdbs = results
-		Naln, g0, g1, g2 = factors
-		QHmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = finalscore
-		Qalnmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = qaln / N
-	QHmat += QHmat.T
-	Qalnmat += Qalnmat.T
-	distmat_to_txt( pdblist , QHmat, filedir , 'QHmat')
-	distmat_to_txt( pdblist , Qalnmat, filedir , 'Qalnmat')
-	
-	invQH = np.fill_diagonal(1/QHmat, 0 )
-	invQaln = np.fill_diagonal(1/Qalnmat, 0 )
-	distmat_to_txt( pdblist , invQH 	, filedir , 'invQHmat')
-	distmat_to_txt( pdblist , invQaln , filedir , 'invQalnmat')
-	
-	save_obj( QHmat , filedir + 'QHmat')
-	save_obj(   Qalnmat , filedir + 'Qalnmat')
-	
-	pdblist = load_obj(filedir + 'pdblist')
-	print pdblist
-	TMdistmat = np.zeros((len(pdblist),len(pdblist)))
-	print 'creating TMalign based distmat'
-	TMalignresults = load_obj(filedir + 'TMalignfiles')
-	tmlist =[]
-	namelist = []
-	
-	
-	for filename in TMalignresults:
-		distance, pdbs =TMaligntoDistance(filename)
-		for filename in pdbs:
-			if filename not in tmlist:
-				tmlist.append(filename)
-				namelist.append(filename.split('/')[-1])
-	for filename in TMalignresults:
-		distance, pdbs =TMaligntoDistance(filename)
-		TMdistmat[ tmlist.index(pdbs[0]),tmlist.index(pdbs[1])] = distance
-	TMdistmat += TMdistmat.T
-	TMdistmat = (1-TMdistmat)
-	np.fill_diagonal(TMdistmat, 0 )
-	print namelist
-	distmat_to_txt( namelist , TMdistmat, filedir , 'TMdistmat')
-	save_obj(   TMdistmat , filedir + 'TMdistmat')
-	
-	"""
-	
-	tmlist = []
-	namelist = []
-	
-	TMRealignresults = load_obj( filedir +'TMRealignfiles')
-	TMdistmat = np.zeros((len(pdblist),len(pdblist)))
-	print len(TMRealignresults)
-	for filename,pdbs in TMRealignresults:
-		for filename in pdbs:
-			if filename not in tmlist:
-				tmlist.append(filename)
-				namelist.append(filename.split('/')[-1])
-
-	TMdistmat = np.zeros((len(tmlist),len(tmlist)))
-	
-	for filename , pdbs in TMRealignresults:
-		distance, pdbs2 =TMaligntoDistance(filename)
-		TMdistmat[ tmlist.index(pdbs[0]),tmlist.index(pdbs[1])] = 1-distance
-	TMdistmat += TMdistmat.T
-	print TMdistmat
-	distmat_to_txt( namelist , TMdistmat, filedir , 'TMRealigndistmat')
-	save_obj(   TMdistmat , filedir + 'TMRealigndistmat')
-	
-	
-	fig = pylab.figure(figsize=(8,8))
-	axmatrix = fig.add_axes([0.1,0.1,.7,.7] )
-	im = axmatrix.matshow(TMdistmat, aspect='auto', origin='lower', cmap=pylab.cm.YlGnBu, interpolation = 'None')
-	axmatrix.yaxis.tick_right()
-	axmatrix.set_yticks( range(len(tmlist)) )
-	axmatrix.set_xticks( range(len(tmlist)) )
-	axmatrix.set_yticklabels( namelist , fontsize = 10 )
-	axmatrix.set_xticklabels( namelist , fontsize = 10 , rotation = 90)
-	
-	pylab.show()
+	pdblist = glob.glob(filedir +'*.pdb')
+	if SDM == True:
+		distances = load_obj(filedir + 'distances')
+		maxdist = 0
+		pdblist = []
+		for out in distances.values():
+			pdblist += out[0]
+			for dist in out[2]:
+				if dist > maxdist:
+					maxdist = dist
+		pdblist = list(set(pdblist))
+		print( 'creating SDM distmat for Fatcat output')
+		distmat = np.zeros((len(pdblist),len(pdblist)))
+		pvalmat = np.zeros((len(pdblist),len(pdblist)))
+		#calculate SDM based distmat
+		for out in distances.values():
+			lensmallprot = min(out[1])
+			SRMSs = []
+			count = 0
+			pdbs = out[0]
+			distances = out[2]
+			counts = out[3]
+			pval = out[4]
+			for block in distances:
+				count += counts[block]
+				SRMSs.append(counts[block]*(1-distances[block]/maxdist))
+			PFTE = count / lensmallprot
+			avgSRMS = sum(SRMSs)/count
+			w1 = (1 -PFTE + 1 -avgSRMS) /2
+			w2 = (PFTE +avgSRMS)/2
+			sdm = -100* math.log(w1*PFTE + w2 *avgSRMS)
+			distmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = sdm
+			#low pval -> high score
+			pvalmat[ pdblist.index(pdbs[0]),pdblist.index(pdbs[1])] = pval
+		distmat += distmat.T
+		#distmat /= np.amax(distmat)
+		pvalmat = -1 / np.log(pvalmat)
+		pvalmat += pvalmat.T
+		np.fill_diagonal(pvalmat, 0)
 
 
-if show_distmat:
-	pdblist = load_obj(filedir + 'pdblist')
-	D= load_obj(filedir + 'distmat')
-	# Compute and plot first dendrogram.
+		save_obj(   distmat , filedir + 'SDMmat')
+		save_obj(   pvalmat , filedir + 'pvalmat')
+		save_obj(   pdblist , filedir + 'structs')
 
-	#you need to calculate the phyllip kitsch outtree with the distmat before running this part.
-	#it should be in the same folder. as the PDBS etc
-	#this will output a graph with the distmat and the grouping given by phylip on the same graph
+		sdmd=distmat_to_txt( pdblist , distmat, filedir , 'SDMmat')
+		pvald=distmat_to_txt( pdblist , pvalmat, filedir , 'pvalmat')
 
 
-	fig = pylab.figure(figsize=(8,8))
-	tree = PhyloTree( filedir +'outtree', sp_naming_function=None) 
-	leaves = tree.get_leaf_names()
-	idx_dict = {}
+
+		runFastme(fastmepath , sdmd)
+		runFastme(fastmepath , pvald)
+
+	if TM == True:
+		print( 'creating TMalign based distmat')
+		tmlist = []
+		namelist = []
+		TMRealignresults = load_obj( filedir +'TMRealignfiles')
+		TMdistmat = np.zeros((len(pdblist),len(pdblist)))
+		print( len(TMRealignresults))
+		for filename,pdbs in TMRealignresults:
+			for filename in pdbs:
+				if filename not in tmlist:
+					tmlist.append(filename)
+					namelist.append(filename.split('/')[-1])
+		TMdistmat = np.zeros((len(tmlist),len(tmlist)))
+		for filename,pdbs in TMRealignresults:
+			distance,pdbs2,outstr =TMaligntoDistance([filename, pdbs])
+			TMdistmat[ tmlist.index(pdbs[0]),tmlist.index(pdbs[1])] = 1-distance
+		TMdistmat += TMdistmat.T
+		print( TMdistmat )
+		tmd  = distmat_to_txt( namelist , TMdistmat, filedir , 'TMRealigndistmat')
+		runFastme(fastmepath , tmd)
+
+		save_obj(   TMdistmat , filedir + 'TMRealigndistmat')
+		save_obj(   namelist , filedir + 'TMRealigndistmat')
+
+def check_pair(pairvec):
+	#check pivotA: The chosen database is used to find the size of each GO term i.e. the percentage of genes annotated with the term. This quantity determines the size of bubbles in the vizualizations, thus indicating a more general GO term (larger) or a more specific one (smaller). The choice of database also has some influence on the GO term clustering/selection process, and on the bubble placement in the visualizations. If your organism is not available, select the closest relative, e.g. human or mouse should work for any mammal. The default choice (whole UniProt) should also suffice in most cases.
 
 
-	for i,pdb in enumerate(leaves):
-		idx_dict[pdb] = i
-	dmat = np.zeros((len(leaves),len(leaves)))
-	idx_labels = [idx_dict.keys()[idx_dict.values().index(i)] for i in range(0, len(idx_dict))]
-	for l1,l2 in combinations(leaves,2):
-		d = tree.get_distance(l1,l2)
-		dmat[idx_dict[l1],idx_dict[l2]] = dmat[idx_dict[l2],idx_dict[l1]] = d
-	schlink = sch.linkage(distutils.squareform(dmat),method='average',metric='euclidean')
-	ax2 = fig.add_axes([0.09,0.1,0.2,0.6])
-	
-	Z2 = sch.dendrogram(schlink, orientation = 'right')#, labels = pdblist)#,  leaf_rotation=90 )
-	ax2.set_yticks([])
+	occurences = {}
+	if pairvec[0] == pairvec[1]:
+		return False
+	lists = [[],[]]
+	for i,fasta in enumerate(pairvec):
+		with open(fasta, 'r') as lines:
+			for line in lines:
+				if '>' in line :
+					ID = line.split('.')[0]
+					lists[i].append(ID)
+	commonIDs = list(set(lists[0]) & set(lists[1]))
+	if len(commonIDs) > 0 :
+		return True
+	else :
+		return False
 
-	# Plot distance matrix.
-	axmatrix = fig.add_axes([0.3,0.1,0.6,0.6])
-	idx1 = Z2['leaves']
-	D = D[idx1,:]
-	D = D[:,idx1]
-	pdblist = np.asarray(leaves)[idx1]
-	im = axmatrix.matshow(D, aspect='auto', origin='lower', cmap=pylab.cm.YlGnBu, interpolation = 'None')
-	axmatrix.yaxis.tick_right()
-	axmatrix.set_yticks( range(len(pdblist)) )
-	axmatrix.set_xticks( range(len(pdblist)) )
-	axmatrix.set_yticklabels( pdblist , fontsize = 10 )
-	axmatrix.set_xticklabels( pdblist , fontsize = 10 , rotation = 90)
-	
-	# Plot colorbar.
-	axcolor = fig.add_axes([0.3,0.07,0.6,0.02] )
-	pylab.colorbar(im, cax=axcolor, orientation = 'horizontal')
-	fig.subplots_adjust(right=5)
-	pylab.show()
+def check_identical(fasta):
+	seq= ['','']
+	i = 0
+
+	record_iterator = iter(AlignIO.read(fasta, "fasta"))
+	first = next(record_iterator)
+	second = next(record_iterator)
+
+	if str(first.seq).replace('\n','') not in str(second.seq).replace('\n',''):
+		if '-' in str(first.seq)+str(second.seq):
+			return fasta
+	else:
+		return None
+
+
+def check_ids(fasta):
+	record_iterator = iter(AlignIO.read(fasta, "fasta"))
+	return [ rec.id for rec in record_iterator]
 
 if merge == True:
-	print alignments
-	print 'merging all alignments'
-	i = 0
+## TODO: clean this up. names not correctly transferring
 	alignments = load_obj(filedir + 'fastas')
-	alignMerge ={}
-	alignMerge[i] = alignments
-	while len(alignMerge[i]) > 2:
-		#halve the alignment list with each iteration and grab the remainder for the next round
-		alignMerge[i + 1] = []
-		nextmerge = []
-		print 'round ' + str(i)
-		print alignMerge[i]
-		for j,fasta in enumerate(alignMerge[i]):
-			if len(nextmerge) == 2:
-				mergeAlign(clustaloPath  ,nextmerge[0],nextmerge[1] , nextmerge[0] + str(i)+ '.fasta' )
-				alignMerge[i+1].append(nextmerge[0] + str(i)+ '.fasta')
-				nextmerge = []
-				nextmerge.append(fasta)
-			else:
-				nextmerge.append(fasta)
-		else:	
-			alignMerge[i+1] += nextmerge
-		i+=1
-	finalFasta = alignMerge[alignMerge.keys()[-1]][0]
-	#pare down the alignment so that it is non-redundant
-	record_iterator = AlignIO.read(finalFasta, "fasta")
-	writeout=[]
-	titles = []
-	print 'final fasta '
-	print finalFasta
+	if maketmfastas == True:
+		alignments = load_obj(filedir + 'tmfastas')
+	print( alignments)
+	print( 'merging all alignments')
+	nextmerge = []
+	i =0
 
-	for record in record_iterator:
-		if record.id not in titles:
-			titles.append(record.id)
-			print record
-			writeout.append(record)
 
-	print len(writeout)
+	fastasleft = list(alignments)
+	print(len(fastasleft))
 
-if resolve_names == True:
-	fastas = glob.glob(filedir + '*fasta')
-	for fasta in fastas:
-		if 'nr' not in fasta:
-			record_iterator = AlignIO.read(fasta, "fasta")
-			writeout=[]
-			redundant = []
-			for i,record in enumerate(record_iterator):
-					record.id = str(i)+ '_'+record.id
-					record.description = ''
-					writeout.append(record)
-			handle = open(fasta + 'nr.fasta' , 'w')
-			SeqIO.write( writeout, handle, 'fasta')
-			handle.close()
+	fastasleft = [ check_identical(fasta) for fasta in fastasleft ]
+	fastasleft = [ fasta for fasta in fastasleft if fasta ]
+	print(fastasleft)
+
+	ids = [ id for fasta in fastasleft for id in  check_ids(fasta) ]
+	print(set(ids))
+
+	for id in set(ids):
+		for fasta in fastasleft:
+			if id[0:4] in fasta:
+				if i >0:
+					if len( set(check_ids(fasta)).difference(set(check_ids(filedir+'total.fasta'))) ) > 0 :
+						mergeAlign(clustaloPath,fasta, filedir+'total.fasta' , filedir+'total.fasta' )
+				else:
+					with open( filedir+'total.fasta' , 'w' ) as out:
+						with open(fasta ,'r') as infile:
+							out.write(infile.read())
+				i+=1
+	print('DONE')
