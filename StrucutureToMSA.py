@@ -4,7 +4,7 @@
 #fatcat is the java based version included with the protein comparison tool
 #from the PDB website.
 #the phylogeny is derived from a distance matrix
-#I used phylip kitsch to generate the newick tree. but any newick tree should work.
+
 import glob
 import subprocess
 import itertools
@@ -29,30 +29,30 @@ import tempfile as tmp
 
 random.seed(0)
 
+
+overwrite = True
 #find input pdbs
 grabPDBs = True
 #steps in the process
 align = True
 #compute all pairwise alignments with fatcat
 Fatcatalign = True
-#perform rigid body alignment
-TMalign = False
 #realign flexed structures with TM align
-TMalign_from_Fatcat = False
+TMalign_from_Fatcat = True
 
 #use fatcat output to generate pairwise fastas
 parse = True
 #use TMalign results on flexed fatcat structures to generate pairwise fastas
-maketmfastas = False
+maketmfastas = True
 
 #use clustalo to create MSA of the strucutres
 merge = True
 
 #output a distance matrices
-distmat = False
+distmat = True
 
-TM = False
-SDM = True
+TM = True
+SDM = False
 
 show_distmat = False
 splitFatcat = False
@@ -71,10 +71,10 @@ splitFatcat = False
 
 #filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/'
 
-#filedir = '/home/cactuskid/Dropbox/IIB/archaeaReboot/David/models/structalign_figure/'
+filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/structalign_figure/'
 
+#filedir = '/home/cactuskid/cactuskid13@gmail.com/metal_coordination/final/'
 
-filedir = '/home/cactuskid/cactuskid13@gmail.com/metal_coordination/final/'
 outpath = filedir
 #where is fatcat?
 FatcatPath =  './runFATCAT.sh'
@@ -101,7 +101,6 @@ def runFatcat(pargs):
 			if len(preout.read())>0:
 				print(outfile + ' already exists	')
 				return outfile
-
 	args =  FatcatPath + ' -file1 ' + struct1 + ' -file2 ' + struct2 + '  -printFatCat -flexible True -outputPDB  -outFile '+ outPDB
 	print( args)
 	args = shlex.split(args)
@@ -117,8 +116,9 @@ def runTMalign(pargs):
 	args = shlex.split(args)
 	TMfile = open(outfile, 'w')
 	p = subprocess.call(args , stdout= TMfile )
-	TMfile.close()
+
 	return outfile
+
 
 def splitFile(Fatcatstruct, outdir , pdbs):
 	"""
@@ -207,10 +207,13 @@ def splitFileTMP(Fatcatstruct, outdir):
 
 	for handle in handles:
 		handle.close()
+
 	return filehandle1, filehandle2;
 
 def runTMalign_FatcatOut(pargs):
 	TMalignPath , Fatcatstruct, outfile  = pargs
+
+
 	TMfile = open(outfile, 'w')
 	"""
 	TITLE  jFatCat_flexible 1.0 domain3_4hj1.pdb vs. domain3_4adi.pdb
@@ -237,23 +240,27 @@ def runTMalign_FatcatOut(pargs):
 				coords[i] = ''
 			if start == True:
 				coords [i] += line
+
+	pdbs = [pdb1, pdb2]
+	if os.path.isfile(outfile):
+		with open( outfile , 'r')as preout:
+			if len(preout.read())>0:
+				print(outfile + ' already exists	')
+				return outfile , pdbs
+
+	print(pdbs)
 	filehandle1 = tmp.NamedTemporaryFile( 'w' , dir = './')
 	filehandle2 = tmp.NamedTemporaryFile( 'w' , dir = './')
 	handles = [filehandle1, filehandle2]
-	pdbs = [pdb1, pdb2]
 	for i,struct in enumerate(coords):
 		handles[i].write(header)
 		handles[i].write(coords[struct])
 		handles[i].write('ENDMDL')
 	args =  TMalignPath + ' ' + handles[0].name + ' ' + handles[1].name
 	print(args)
-
 	args = shlex.split(args)
 	TMfile = open(outfile, 'w')
 	p = subprocess.call(args , stdout= TMfile )
-
-	for handle in handles:
-		handle.close()
 	TMfile.close()
 	return outfile , pdbs
 
@@ -285,6 +292,7 @@ def mergeAlign(clustalopath , fasta1, fasta2, outfile):
 	p = subprocess.call(args )
 
 def FatcatToFasta(fatout, filename):
+
 	alns = ['','']
 	files = []
 	BlockNext = False
@@ -292,7 +300,7 @@ def FatcatToFasta(fatout, filename):
 	with open( fatout , 'r' ) as fatfile:
 		for line in fatfile:
 			try:
-				print( line)
+				#print( line)
 				if 'file from local' in line:
 					files.append(line.split('/')[-1])
 				#format  = Chain 1:   16 PHC---------------SKTPIVRAQTSQNAMS-------RGMQMQFSIGLHT---------AVC----
@@ -302,21 +310,22 @@ def FatcatToFasta(fatout, filename):
 					alns[1] += line.split(':')[1].strip().split(' ')[1]
 			except:
 				print('line error:')
-				print( line)
+
 		try:
 			alnstr1 = '>'+files[0][:-1] + 'Fatcat_block' +'\n' +alns[0] + '\n'
 			alnstr2 = '>'+files[1][:-1] + 'Fatcat_block' +'\n' +alns[1] + '\n'
+			print( alnstr1 + '\n' +alnstr2 )
+			handle = open(filename  , 'w')
+			handle.write(alnstr1 + '\n')
+			handle.write(alnstr2)
+			handle.close()
+			return filename
 		except:
-			print( [files , alns ])
-		alnstr1=''
-		alnstr2=''
-		print( alnstr1)
-		print(alnstr2)
-		handle = open(filename  , 'w')
-		handle.write(alnstr1 + '\n')
-		handle.write(alnstr2)
-		handle.close()
-		return filename
+			print([files , alns ])
+
+
+
+
 
 def FatcatToDistances(fatout):
 	alns = ['','']
@@ -401,35 +410,40 @@ def TMaligntoDistance(args):
 	readpdbs =[]
 	line1 = False
 	line2 = 10**10
-	with open( TMalignfile, 'r') as output:
-		for i,line in enumerate(output):
-			if 'Length of Chain_1:' in line:
-				chain1len = int(line.split(':')[1].split()[0] )
-			if 'Length of Chain_2:' in line:
-				chain2len = int(line.split(':')[1].split()[0]	)
-			if 'Name of Chain_' in line and '*' not in line :
-				readpdbs.append(line.split(':')[1].strip())
-			if 'TM-score' in line and '*' not in line and ' normalized by length of the reference protein' not in line:
-				score = float(line.split('=')[1].split( )[0])
-				TMscores.append(score)
+	try:
+		with open( TMalignfile, 'r') as output:
+			for i,line in enumerate(output):
+				if 'Length of Chain_1:' in line:
+					chain1len = int(line.split(':')[1].split()[0] )
+				if 'Length of Chain_2:' in line:
+					chain2len = int(line.split(':')[1].split()[0]	)
+				if 'Name of Chain_' in line and '*' not in line :
+					readpdbs.append(line.split(':')[1].strip())
+				if 'TM-score' in line and '*' not in line and ' normalized by length of the reference protein' not in line:
+					score = float(line.split('=')[1].split( )[0])
+					TMscores.append(score)
 
-			if line1== True:
-				fasta1= line
-				line2 = i+2
-				line1 = False
+				if line1== True:
+					fasta1= line
+					line2 = i+2
+					line1 = False
 
-			if '(":" denotes aligned residue pairs of d < 5.0 A, "." denotes other aligned residues)' in line:
-				line1 = True
+				if '(":" denotes aligned residue pairs of d < 5.0 A, "." denotes other aligned residues)' in line:
+					line1 = True
 
-			if i == line2:
-				fasta2 = line
+				if i == line2:
+					fasta2 = line
 
-	outstr = ''.join(['>' ,pdbs[0] ,'\n' , fasta1 , '\n' ,  '>' ,pdbs[1] ,'\n' , fasta2 ,'\n' ])
-	print( outstr)
-	if chain1len>chain2len:
-		return TMscores[1], pdbs , outstr
-	else :
-		return TMscores[0], pdbs , outstr
+		outstr = ''.join(['>' ,pdbs[0] ,'\n' , fasta2 , '\n' ,  '>' ,pdbs[1] ,'\n' , fasta1 ,'\n' ])
+		print( outstr)
+
+		if chain1len>chain2len:
+			return TMscores[1], pdbs , outstr
+		else :
+			return TMscores[0], pdbs , outstr
+	except:
+		print('aln err ' + TMalignfile)
+
 
 def FatcatToDF(fatout):
 	print( fatout)
@@ -565,30 +579,22 @@ if align == True:
 		results = pool.map_async( runFatcat , runData, MP.cpu_count() ).get()
 		pool.close()
 		save_obj( results, filedir +'fatcatfiles')
-	if TMalign == True:
-		TMalignfiles = []
-		runData = []
-		for struct1,struct2 in itertools.combinations(structures, 2):
-			outfile = outpath + struct1.split('/')[-1].replace('.pdb','')+ '_'+struct2.split('/')[-1].replace('.pdb','') + '.TMalign'
-			outPDB = outfile + 'PDB'
-			runData.append([FatcatPath ,struct1,struct2, outfile, outPDB])
-		print('TMalign align allvall')
-		pool = MP.Pool()
-		results = pool.map_async( runTMalign , runData, MP.cpu_count() ).get()
-		pool.close()
-		save_obj( results, filedir +'TMalignfiles')
+
 	if TMalign_from_Fatcat == True:
 		#run this after fatcat!
 		runData = []
 		alignments = load_obj(filedir + 'fatcatfiles')
 		for aln in alignments:
 			runData.append([TMalignPath , aln+'PDB' ,  aln+'TMRealign'])
+
 		print( runData)
 		pool = MP.Pool()
 		results = pool.map_async( runTMalign_FatcatOut, runData, MP.cpu_count() ).get()
 		save_obj( results, filedir +'TMRealignfiles')
+
 		pool.close()
 		print('done aligning')
+
 if splitFatcat == True:
 	splitdir = filedir + splitpath
 	if os.path.exists(splitdir) == False:
@@ -606,26 +612,32 @@ if parse == True:
 	print(len(alignments))
 	fastas = []
 	distances = {}
+
 	print( 'converting fatcat output to fasta')
 	for aln in alignments:
 		fastas.append(FatcatToFasta(aln,aln+'.fasta'))
+
 	for aln in alignments:
 		distances[aln] = FatcatToDistances(aln)
+
 	if maketmfastas == True:
 		tmalignments = load_obj(filedir + 'TMRealignfiles')
+		print(tmalignments)
 		tmfastas = []
 		for aln in tmalignments:
-			distance, pdbs, outstr = TMaligntoDistance(aln)
-			handle = open(aln[0]+'.fasta' , 'w')
-			handle.write(outstr)
-			handle.close()
+			print(aln)
+			retval  = TMaligntoDistance(aln)
+			if retval:
+				distance, pdbs, outstr = retval
+				with open(aln[0]+'.fasta' , 'w') as handle:
+					handle.write(outstr)
 			tmfastas.append(aln[0]+'.fasta')
-		save_obj(tmfastas, filedir + 'tmfastas')
 	print( len(fastas))
 	print( 'alignments by fatcat')
-	save_obj( fastas, filedir+'fastas')
+	save_obj( tmfastas, filedir+'tmfastas')
 	save_obj(  distances, filedir +'distances')
 	print( 'done writing fastas')
+
 def runFastme( fastmepath , clusterfile ):
 	args =  fastmepath +  ' -i ' + clusterfile + ' -o ' + clusterfile+'_tree.txt'
 	print( args)
@@ -726,15 +738,19 @@ if distmat == True:
 					namelist.append(filename.split('/')[-1])
 		TMdistmat = np.zeros((len(tmlist),len(tmlist)))
 		for filename,pdbs in TMRealignresults:
-			distance,pdbs2,outstr =TMaligntoDistance([filename, pdbs])
-			TMdistmat[ tmlist.index(pdbs[0]),tmlist.index(pdbs[1])] = 1-distance
+			try:
+				distance,pdbs2,outstr =TMaligntoDistance([filename, pdbs])
+				TMdistmat[ tmlist.index(pdbs[0]),tmlist.index(pdbs[1])] = 1-distance
+			except:
+				print(filename)
 		TMdistmat += TMdistmat.T
 		print( TMdistmat )
-		tmd  = distmat_to_txt( namelist , TMdistmat, filedir , 'TMRealigndistmat')
-		runFastme(fastmepath , tmd)
 
+		#tmd  = distmat_to_txt( namelist , TMdistmat, filedir , 'TMRealigndistmat')
+		#runFastme(fastmepath , tmd)
+		print(namelist)
 		save_obj(   TMdistmat , filedir + 'TMRealigndistmat')
-		save_obj(   namelist , filedir + 'TMRealigndistmat')
+		save_obj(   namelist , filedir + 'structs')
 
 def check_pair(pairvec):
 	#check pivotA: The chosen database is used to find the size of each GO term i.e. the percentage of genes annotated with the term. This quantity determines the size of bubbles in the vizualizations, thus indicating a more general GO term (larger) or a more specific one (smaller). The choice of database also has some influence on the GO term clustering/selection process, and on the bubble placement in the visualizations. If your organism is not available, select the closest relative, e.g. human or mouse should work for any mammal. The default choice (whole UniProt) should also suffice in most cases.
@@ -759,15 +775,23 @@ def check_pair(pairvec):
 def check_identical(fasta):
 	seq= ['','']
 	i = 0
-
-	record_iterator = iter(AlignIO.read(fasta, "fasta"))
-	first = next(record_iterator)
-	second = next(record_iterator)
+	try:
+		if fasta:
+			record_iterator = iter(AlignIO.read(fasta, "fasta"))
+			first = next(record_iterator)
+			second = next(record_iterator)
+		else:
+			return None
+	except:
+		print('read error')
+		print( fasta )
 
 	if str(first.seq).replace('\n','') not in str(second.seq).replace('\n',''):
 		if '-' in str(first.seq)+str(second.seq):
+
 			return fasta
 	else:
+		print( fasta )
 		return None
 
 
@@ -777,9 +801,9 @@ def check_ids(fasta):
 
 if merge == True:
 ## TODO: clean this up. names not correctly transferring
-	alignments = load_obj(filedir + 'fastas')
-	if maketmfastas == True:
-		alignments = load_obj(filedir + 'tmfastas')
+
+	#alignments = glob.glob(filedir + '*TMRealign.fasta')
+	alignments = load_obj(filedir +'tmfastas')
 	print( alignments)
 	print( 'merging all alignments')
 	nextmerge = []
@@ -790,21 +814,25 @@ if merge == True:
 	print(len(fastasleft))
 
 	fastasleft = [ check_identical(fasta) for fasta in fastasleft ]
+
 	fastasleft = [ fasta for fasta in fastasleft if fasta ]
 	print(fastasleft)
-
 	ids = [ id for fasta in fastasleft for id in  check_ids(fasta) ]
 	print(set(ids))
 
-	for id in set(ids):
-		for fasta in fastasleft:
-			if id[0:4] in fasta:
-				if i >0:
-					if len( set(check_ids(fasta)).difference(set(check_ids(filedir+'total.fasta'))) ) > 0 :
-						mergeAlign(clustaloPath,fasta, filedir+'total.fasta' , filedir+'total.fasta' )
-				else:
-					with open( filedir+'total.fasta' , 'w' ) as out:
-						with open(fasta ,'r') as infile:
-							out.write(infile.read())
-				i+=1
+
+	count = 1
+	for i, fasta in enumerate(alignments):
+		if i >0:
+			if len( set(check_ids(fasta)).difference(set(check_ids(filedir+str(count-1)+'total.fasta'))) ) > 0 :
+				mergeAlign(clustaloPath,fasta, filedir+str(count-1)+'total.fasta' , filedir+str(count)+'total.fasta' )
+				seen = set([ id for  id in  check_ids(filedir+str(count)+'total.fasta') ])
+				count+=1
+
+		else:
+			with open( filedir+str(count-1)+'total.fasta' , 'w' ) as out:
+				with open(fasta ,'r') as infile:
+					out.write(infile.read())
+
+			i+=1
 	print('DONE')
