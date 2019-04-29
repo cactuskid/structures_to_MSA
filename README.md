@@ -1,13 +1,14 @@
 # structures_to_MSA
 
-#requirements
+requirements
 
--some python libraries required
-pip install pandas biopython numpy
+some python libraries required:
 
--Bioinformatics binaries ( should be installed to path )
--clustalo [http://www.clustal.org/omega/]
--fastme [http://www.atgc-montpellier.fr/fastme/binaries.php]
+  -pip install pandas biopython numpy
+
+Bioinformatics binaries ( should be installed to path ):
+  - clustalo [http://www.clustal.org/omega/]
+  - fastme [http://www.atgc-montpellier.fr/fastme/binaries.php]
 
 
 
