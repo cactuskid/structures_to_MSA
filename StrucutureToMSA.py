@@ -18,9 +18,7 @@ import numpy as np
 import pandas as pd
 import math
 #import pylab
-import scipy.cluster.hierarchy as sch
 from itertools import combinations, permutations
-import scipy.spatial.distance as distutils
 import multiprocessing as MP
 import os
 import random
@@ -33,7 +31,10 @@ random.seed(0)
 overwrite = True
 #find input pdbs
 grabPDBs = True
-#steps in the process
+
+
+
+#steps in the process of alignment and outputing an MSA and tree
 align = True
 #compute all pairwise alignments with fatcat
 Fatcatalign = True
@@ -50,30 +51,15 @@ merge = True
 
 #output a distance matrices
 distmat = True
-
 TM = True
 SDM = False
-
 show_distmat = False
 splitFatcat = False
 
 #where a your structures? ... should all be single chain with decent homology.
-#filedir = '../domainIII/'
-#filedir = '../structural_alignment/arabidop/'
-#filedir = '../structural_alignment/onlyhaps/'
-#filedir = '../effHapViralNew/flexi/'
-#filedir = '../structural_alignment/effcheck/'
-#filedir = '../structural_alignment/archaea_w_hap/'
-#filedir = '../effHapViralNew/'
-#filedir = '../newmodels/final/'
-#filedir = '/home/cactuskid/Dropbox/SAS-6_collection/structalignALL/'
-#filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/structalign_archaea_final/'
-
-#filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/'
-
 filedir = '/home/cactuskid/cactuskid13@gmail.com/Dropbox.bak/IIB/archaeaReboot/David/models/structalign_figure/'
 
-#filedir = '/home/cactuskid/cactuskid13@gmail.com/metal_coordination/final/'
+
 
 outpath = filedir
 #where is fatcat?
